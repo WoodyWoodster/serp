@@ -35,7 +35,7 @@ func (h *Handler) HandleRequest(ctx context.Context, event shared.AppSyncEvent) 
 		id, _ := event.Arguments["id"].(string)
 		return h.getItemByID(ctx, id)
 	case "listItems":
-		return h.listItems(ctx, event.Arguments)
+		return h.listItems(ctx)
 	case "createItem":
 		return h.createItem(ctx, event.Arguments)
 	case "updateItem":
@@ -52,11 +52,11 @@ func (h *Handler) getItemByID(ctx context.Context, id string) (*shared.Item, err
 	return h.db.GetItem(ctx, id)
 }
 
-func (h *Handler) listItems(ctx context.Context, args map[string]interface{}) ([]shared.Item, error) {
+func (h *Handler) listItems(ctx context.Context) ([]shared.Item, error) {
 	return h.db.ListItems(ctx)
 }
 
-func (h *Handler) createItem(ctx context.Context, args map[string]interface{}) (*shared.Item, error) {
+func (h *Handler) createItem(ctx context.Context, args map[string]any) (*shared.Item, error) {
 	now := time.Now().UTC()
 	item := shared.Item{
 		ID:          uuid.New().String(),
