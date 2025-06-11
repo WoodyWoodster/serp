@@ -1,0 +1,133 @@
+type Item {
+  id: ID!
+  sku: String!
+  name: String!
+  description: String
+  quantity: Int!
+  unitPrice: Float!
+  category: String!
+  createdAt: AWSDateTime!
+  updatedAt: AWSDateTime!
+}
+
+type Order {
+  id: ID!
+  customerId: String!
+  status: OrderStatus!
+  items: [OrderItem!]!
+  totalAmount: Float!
+  createdAt: AWSDateTime!
+  updatedAt: AWSDateTime!
+}
+
+type OrderItem {
+  id: ID!
+  orderId: ID!
+  itemId: ID!
+  quantity: Int!
+  unitPrice: Float!
+  totalPrice: Float!
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+type Query {
+  # Inventory queries
+  getItem(id: ID!): Item
+  listItems(
+    filter: ItemFilterInput
+    limit: Int
+    nextToken: String
+  ): ItemConnection
+
+  # Order queries
+  getOrder(id: ID!): Order
+  listOrders(
+    filter: OrderFilterInput
+    limit: Int
+    nextToken: String
+  ): OrderConnection
+}
+
+type Mutation {
+  # Inventory mutations
+  createItem(input: CreateItemInput!): Item!
+  updateItem(input: UpdateItemInput!): Item!
+  deleteItem(id: ID!): Boolean!
+
+  # Order mutations
+  createOrder(input: CreateOrderInput!): Order!
+  updateOrderStatus(input: UpdateOrderStatusInput!): Order!
+  cancelOrder(id: ID!): Order!
+}
+
+input CreateItemInput {
+  sku: String!
+  name: String!
+  description: String
+  quantity: Int!
+  unitPrice: Float!
+  category: String!
+}
+
+input UpdateItemInput {
+  id: ID!
+  sku: String
+  name: String
+  description: String
+  quantity: Int
+  unitPrice: Float
+  category: String
+}
+
+input ItemFilterInput {
+  sku: String
+  name: String
+  category: String
+  minPrice: Float
+  maxPrice: Float
+}
+
+input CreateOrderInput {
+  customerId: String!
+  items: [CreateOrderItemInput!]!
+}
+
+input CreateOrderItemInput {
+  itemId: String!
+  quantity: Int!
+}
+
+input UpdateOrderStatusInput {
+  orderId: ID!
+  status: OrderStatus!
+}
+
+input OrderFilterInput {
+  customerId: String
+  status: OrderStatus
+  startDate: AWSDateTime
+  endDate: AWSDateTime
+}
+
+type ItemConnection {
+  items: [Item!]!
+  nextToken: String
+}
+
+type OrderConnection {
+  items: [Order!]!
+  nextToken: String
+}
+
+schema {
+  query: Query
+  mutation: Mutation
+}
