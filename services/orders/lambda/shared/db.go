@@ -189,15 +189,27 @@ func UpdateOrderStatus(ctx context.Context, db DBClient, input UpdateOrderStatus
 	return order, nil
 }
 
-func UnmarshalOrder(item map[string]dynamodbtypes.AttributeValue) Order {
-	totalAmount, _ := strconv.ParseFloat(item["TotalAmount"].(*dynamodbtypes.AttributeValueMemberN).Value, 64)
-
-	return Order{
-		ID:          item["ID"].(*dynamodbtypes.AttributeValueMemberS).Value,
-		CustomerID:  item["CustomerID"].(*dynamodbtypes.AttributeValueMemberS).Value,
-		Status:      OrderStatus(item["Status"].(*dynamodbtypes.AttributeValueMemberS).Value),
-		TotalAmount: totalAmount,
-		CreatedAt:   item["CreatedAt"].(*dynamodbtypes.AttributeValueMemberS).Value,
-		UpdatedAt:   item["UpdatedAt"].(*dynamodbtypes.AttributeValueMemberS).Value,
+func UnmarshalOrder(av map[string]dynamodbtypes.AttributeValue) Order {
+	order := Order{}
+	if v, ok := av["ID"].(*dynamodbtypes.AttributeValueMemberS); ok {
+		order.ID = v.Value
 	}
+	if v, ok := av["CustomerID"].(*dynamodbtypes.AttributeValueMemberS); ok {
+		order.CustomerID = v.Value
+	}
+	if v, ok := av["Status"].(*dynamodbtypes.AttributeValueMemberS); ok {
+		order.Status = OrderStatus(v.Value)
+	}
+	if v, ok := av["TotalAmount"].(*dynamodbtypes.AttributeValueMemberN); ok {
+		if f, err := strconv.ParseFloat(v.Value, 64); err == nil {
+			order.TotalAmount = f
+		}
+	}
+	if v, ok := av["CreatedAt"].(*dynamodbtypes.AttributeValueMemberS); ok {
+		order.CreatedAt = v.Value
+	}
+	if v, ok := av["UpdatedAt"].(*dynamodbtypes.AttributeValueMemberS); ok {
+		order.UpdatedAt = v.Value
+	}
+	return order
 }
