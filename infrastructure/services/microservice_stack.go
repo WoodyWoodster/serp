@@ -84,10 +84,45 @@ func NewMicroserviceStack(scope constructs.Construct, id string, props *Microser
 			},
 		)
 		lambdaDataSource.CreateResolver(
+			jsii.String(props.ServiceName+"InventoryQueriesResolver"),
+			&awsappsync.BaseResolverProps{
+				TypeName:  jsii.String("InventoryQueries"),
+				FieldName: jsii.String("getItem"),
+			},
+		)
+		lambdaDataSource.CreateResolver(
+			jsii.String(props.ServiceName+"InventoryQueriesListResolver"),
+			&awsappsync.BaseResolverProps{
+				TypeName:  jsii.String("InventoryQueries"),
+				FieldName: jsii.String("listItems"),
+			},
+		)
+		lambdaDataSource.CreateResolver(
 			jsii.String(props.ServiceName+"MutationResolver"),
 			&awsappsync.BaseResolverProps{
 				TypeName:  jsii.String("Mutation"),
 				FieldName: jsii.String("inventory"),
+			},
+		)
+		lambdaDataSource.CreateResolver(
+			jsii.String(props.ServiceName+"InventoryMutationsResolver"),
+			&awsappsync.BaseResolverProps{
+				TypeName:  jsii.String("InventoryMutations"),
+				FieldName: jsii.String("createItem"),
+			},
+		)
+		lambdaDataSource.CreateResolver(
+			jsii.String(props.ServiceName+"InventoryMutationsUpdateResolver"),
+			&awsappsync.BaseResolverProps{
+				TypeName:  jsii.String("InventoryMutations"),
+				FieldName: jsii.String("updateItem"),
+			},
+		)
+		lambdaDataSource.CreateResolver(
+			jsii.String(props.ServiceName+"InventoryMutationsDeleteResolver"),
+			&awsappsync.BaseResolverProps{
+				TypeName:  jsii.String("InventoryMutations"),
+				FieldName: jsii.String("deleteItem"),
 			},
 		)
 	case "orders":
@@ -99,10 +134,45 @@ func NewMicroserviceStack(scope constructs.Construct, id string, props *Microser
 			},
 		)
 		lambdaDataSource.CreateResolver(
+			jsii.String(props.ServiceName+"OrderQueriesResolver"),
+			&awsappsync.BaseResolverProps{
+				TypeName:  jsii.String("OrderQueries"),
+				FieldName: jsii.String("getOrder"),
+			},
+		)
+		lambdaDataSource.CreateResolver(
+			jsii.String(props.ServiceName+"OrderQueriesListResolver"),
+			&awsappsync.BaseResolverProps{
+				TypeName:  jsii.String("OrderQueries"),
+				FieldName: jsii.String("listOrders"),
+			},
+		)
+		lambdaDataSource.CreateResolver(
 			jsii.String(props.ServiceName+"MutationResolver"),
 			&awsappsync.BaseResolverProps{
 				TypeName:  jsii.String("Mutation"),
 				FieldName: jsii.String("orders"),
+			},
+		)
+		lambdaDataSource.CreateResolver(
+			jsii.String(props.ServiceName+"OrderMutationsResolver"),
+			&awsappsync.BaseResolverProps{
+				TypeName:  jsii.String("OrderMutations"),
+				FieldName: jsii.String("createOrder"),
+			},
+		)
+		lambdaDataSource.CreateResolver(
+			jsii.String(props.ServiceName+"OrderMutationsUpdateResolver"),
+			&awsappsync.BaseResolverProps{
+				TypeName:  jsii.String("OrderMutations"),
+				FieldName: jsii.String("updateOrderStatus"),
+			},
+		)
+		lambdaDataSource.CreateResolver(
+			jsii.String(props.ServiceName+"OrderMutationsCancelResolver"),
+			&awsappsync.BaseResolverProps{
+				TypeName:  jsii.String("OrderMutations"),
+				FieldName: jsii.String("cancelOrder"),
 			},
 		)
 	}
