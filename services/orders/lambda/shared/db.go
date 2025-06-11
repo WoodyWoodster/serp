@@ -83,16 +83,6 @@ func (db *DB) CreateOrder(ctx context.Context, order Order) (*Order, error) {
 		order.ID = uuid.New().String()
 	}
 
-	// Set timestamps if not provided
-	now := time.Now().UTC().Format(time.RFC3339)
-	if order.CreatedAt == "" {
-		order.CreatedAt = now
-	}
-	if order.UpdatedAt == "" {
-		order.UpdatedAt = now
-	}
-
-	// Create main order record
 	_, err := db.client.PutItem(ctx, &dynamodb.PutItemInput{
 		TableName: aws.String(tableName),
 		Item: map[string]types.AttributeValue{
