@@ -13,14 +13,13 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	eventbridgetypes "github.com/aws/aws-sdk-go-v2/service/eventbridge/types"
 )
 
 type Handler struct {
-	ddb *dynamodb.Client
-	eb  *eventbridge.Client
+	db *shared.DB
+	eb *eventbridge.Client
 }
 
 func NewHandler(ctx context.Context) (*Handler, error) {
@@ -29,8 +28,8 @@ func NewHandler(ctx context.Context) (*Handler, error) {
 		return nil, fmt.Errorf("failed to load AWS config: %v", err)
 	}
 	return &Handler{
-		ddb: dynamodb.NewFromConfig(cfg),
-		eb:  eventbridge.NewFromConfig(cfg),
+		db: shared.NewDB(cfg),
+		eb: eventbridge.NewFromConfig(cfg),
 	}, nil
 }
 
@@ -51,7 +50,7 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.CloudWatchEven
 }
 
 func (h *Handler) handleOrderCreated(ctx context.Context, event shared.OrderEvent) error {
-	item, err := shared.GetItemByID(ctx, h.ddb, event.ItemID)
+	item, err := h.db.GetItem(ctx, event.ItemID)
 	if err != nil {
 		return fmt.Errorf("failed to get item: %v", err)
 	}
@@ -59,7 +58,7 @@ func (h *Handler) handleOrderCreated(ctx context.Context, event shared.OrderEven
 		return h.sendInventoryEvent(ctx, "INSUFFICIENT_INVENTORY", event.OrderID, event.ItemID, event.Quantity)
 	}
 	item.Quantity -= event.Quantity
-	_, err = shared.UpdateItem(ctx, h.ddb, shared.UpdateItemInput{ID: item.ID, Quantity: item.Quantity})
+	_, err = h.db.UpdateItem(ctx, *item)
 	if err != nil {
 		return fmt.Errorf("failed to update inventory: %v", err)
 	}
@@ -67,12 +66,12 @@ func (h *Handler) handleOrderCreated(ctx context.Context, event shared.OrderEven
 }
 
 func (h *Handler) handleOrderCancelled(ctx context.Context, event shared.OrderEvent) error {
-	item, err := shared.GetItemByID(ctx, h.ddb, event.ItemID)
+	item, err := h.db.GetItem(ctx, event.ItemID)
 	if err != nil {
 		return fmt.Errorf("failed to get item: %v", err)
 	}
 	item.Quantity += event.Quantity
-	_, err = shared.UpdateItem(ctx, h.ddb, shared.UpdateItemInput{ID: item.ID, Quantity: item.Quantity})
+	_, err = h.db.UpdateItem(ctx, *item)
 	if err != nil {
 		return fmt.Errorf("failed to restore inventory: %v", err)
 	}
