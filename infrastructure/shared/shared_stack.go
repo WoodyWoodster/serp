@@ -4,6 +4,7 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsappsync"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsevents"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
@@ -36,6 +37,16 @@ func NewSharedStack(scope constructs.Construct, id string, props *SharedStackPro
 		ManagedPolicies: &[]awsiam.IManagedPolicy{
 			awsiam.ManagedPolicy_FromAwsManagedPolicyName(jsii.String("service-role/AWSLambdaBasicExecutionRole")),
 		},
+	})
+
+	eventBus := awsevents.NewEventBus(stack, jsii.String("ErpEventBus"), &awsevents.EventBusProps{
+		EventBusName: jsii.String("erp-event-bus"),
+	})
+
+	awscdk.NewCfnOutput(stack, jsii.String("ErpEventBusName"), &awscdk.CfnOutputProps{
+		Value:       eventBus.EventBusName(),
+		Description: jsii.String("The name of the ERP EventBus"),
+		ExportName:  jsii.String("ErpEventBusName"),
 	})
 
 	api := awsappsync.NewGraphqlApi(stack, jsii.String("ErpApi"), &awsappsync.GraphqlApiProps{
