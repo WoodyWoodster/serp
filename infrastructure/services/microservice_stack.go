@@ -1,16 +1,11 @@
 package services
 
 import (
-	"fmt"
-	"os"
-	"strings"
-
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsappsync"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awsevents"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awseventstargets"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awslambdaeventsources"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 )
@@ -54,96 +49,60 @@ func NewMicroserviceStack(scope constructs.Construct, id string, props *Microser
 		Handler: jsii.String("main"),
 		Code:    awslambda.Code_FromAsset(jsii.String("services/"+props.ServiceName+"/lambda"), nil),
 		Environment: &map[string]*string{
-			"TABLE_NAME": table.TableName(),
-			"API_URL":    awscdk.Fn_ImportValue(jsii.String("ErpGraphqlApiUrl")),
+			"TABLE_NAME":   table.TableName(),
+			"API_URL":      awscdk.Fn_ImportValue(jsii.String("ErpGraphqlApiUrl")),
+			"SERVICE_NAME": jsii.String(props.ServiceName),
+			"EVENT_BUS":    awscdk.Fn_ImportValue(jsii.String("ErpEventBusName")),
+			"LOG_LEVEL":    jsii.String("INFO"),
 		},
+		Timeout:    awscdk.Duration_Seconds(jsii.Number(30)),
+		MemorySize: jsii.Number(256),
 	})
 
 	table.GrantReadWriteData(function)
 	api.GrantMutation(function, jsii.String("*"))
 
-	rule := awsevents.NewRule(stack, jsii.String(props.ServiceName+"StreamRule"), &awsevents.RuleProps{
-		EventPattern: &awsevents.EventPattern{
-			Source:     jsii.Strings("aws.dynamodb"),
-			DetailType: jsii.Strings("AWS API Call via CloudTrail"),
-			Detail: &map[string]interface{}{
-				"eventSource": []string{"dynamodb.amazonaws.com"},
-				"eventName":   []string{"PutItem", "UpdateItem", "DeleteItem"},
-				"requestParameters": map[string]interface{}{
-					"tableName": []string{*table.TableName()},
-				},
-			},
-		},
+	streamEventSource := awslambdaeventsources.NewDynamoEventSource(table, &awslambdaeventsources.DynamoEventSourceProps{
+		StartingPosition: awslambda.StartingPosition_LATEST,
+		BatchSize:        jsii.Number(1),
+		RetryAttempts:    jsii.Number(3),
 	})
 
-	rule.AddTarget(awseventstargets.NewLambdaFunction(function, nil))
+	function.AddEventSource(streamEventSource)
 
 	lambdaDataSource := api.AddLambdaDataSource(jsii.String(props.ServiceName+"LambdaDataSource"), function, nil)
 
-	schemaPath := "services/" + props.ServiceName + "/schema.graphql"
-	schemaBytes, err := os.ReadFile(schemaPath)
-	if err == nil {
-		schema := string(schemaBytes)
-		if strings.Contains(schema, "type Query") {
-			for _, field := range []string{"getItem", "listItems", "getOrder", "listOrders"} {
-				lambdaDataSource.CreateResolver(
-					jsii.String(props.ServiceName+field+"Resolver"),
-					&awsappsync.BaseResolverProps{
-						TypeName:  jsii.String("Query"),
-						FieldName: jsii.String(field),
-					},
-				)
-			}
-		}
-		if strings.Contains(schema, "type Mutation") {
-			for _, field := range []string{"createItem", "updateItem", "deleteItem", "createOrder", "updateOrderStatus", "cancelOrder"} {
-				lambdaDataSource.CreateResolver(
-					jsii.String(props.ServiceName+field+"Resolver"),
-					&awsappsync.BaseResolverProps{
-						TypeName:  jsii.String("Mutation"),
-						FieldName: jsii.String(field),
-					},
-				)
-			}
-		}
-	}
-
-	serviceResolvers := map[string]struct {
-		Queries   []string
-		Mutations []string
-	}{
-		"inventory": {
-			Queries:   []string{"getItem", "listItems"},
-			Mutations: []string{"createItem", "updateItem", "deleteItem"},
-		},
-		"orders": {
-			Queries:   []string{"getOrder", "listOrders"},
-			Mutations: []string{"createOrder", "updateOrderStatus", "cancelOrder"},
-		},
-	}
-
-	resolvers, ok := serviceResolvers[props.ServiceName]
-	if ok {
-		for _, field := range resolvers.Queries {
-			resolverId := fmt.Sprintf("%s_%s_%s_Resolver", props.ServiceName, "Query", field)
-			lambdaDataSource.CreateResolver(
-				jsii.String(resolverId),
-				&awsappsync.BaseResolverProps{
-					TypeName:  jsii.String("Query"),
-					FieldName: jsii.String(field),
-				},
-			)
-		}
-		for _, field := range resolvers.Mutations {
-			resolverId := fmt.Sprintf("%s_%s_%s_Resolver", props.ServiceName, "Mutation", field)
-			lambdaDataSource.CreateResolver(
-				jsii.String(resolverId),
-				&awsappsync.BaseResolverProps{
-					TypeName:  jsii.String("Mutation"),
-					FieldName: jsii.String(field),
-				},
-			)
-		}
+	switch props.ServiceName {
+	case "inventory":
+		lambdaDataSource.CreateResolver(
+			jsii.String(props.ServiceName+"QueryResolver"),
+			&awsappsync.BaseResolverProps{
+				TypeName:  jsii.String("Query"),
+				FieldName: jsii.String("inventory"),
+			},
+		)
+		lambdaDataSource.CreateResolver(
+			jsii.String(props.ServiceName+"MutationResolver"),
+			&awsappsync.BaseResolverProps{
+				TypeName:  jsii.String("Mutation"),
+				FieldName: jsii.String("inventory"),
+			},
+		)
+	case "orders":
+		lambdaDataSource.CreateResolver(
+			jsii.String(props.ServiceName+"QueryResolver"),
+			&awsappsync.BaseResolverProps{
+				TypeName:  jsii.String("Query"),
+				FieldName: jsii.String("orders"),
+			},
+		)
+		lambdaDataSource.CreateResolver(
+			jsii.String(props.ServiceName+"MutationResolver"),
+			&awsappsync.BaseResolverProps{
+				TypeName:  jsii.String("Mutation"),
+				FieldName: jsii.String("orders"),
+			},
+		)
 	}
 
 	return stack
