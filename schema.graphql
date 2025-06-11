@@ -40,6 +40,7 @@ enum OrderStatus {
 
 type Query {
   # Inventory queries
+  inventory: InventoryQueries
   getItem(id: ID!): Item
   listItems(
     filter: ItemFilterInput
@@ -48,6 +49,25 @@ type Query {
   ): ItemConnection
 
   # Order queries
+  orders: OrderQueries
+  getOrder(id: ID!): Order
+  listOrders(
+    filter: OrderFilterInput
+    limit: Int
+    nextToken: String
+  ): OrderConnection
+}
+
+type InventoryQueries {
+  getItem(id: ID!): Item
+  listItems(
+    filter: ItemFilterInput
+    limit: Int
+    nextToken: String
+  ): ItemConnection
+}
+
+type OrderQueries {
   getOrder(id: ID!): Order
   listOrders(
     filter: OrderFilterInput
@@ -58,11 +78,25 @@ type Query {
 
 type Mutation {
   # Inventory mutations
+  inventory: InventoryMutations
   createItem(input: CreateItemInput!): Item!
   updateItem(input: UpdateItemInput!): Item!
   deleteItem(id: ID!): Boolean!
 
   # Order mutations
+  orders: OrderMutations
+  createOrder(input: CreateOrderInput!): Order!
+  updateOrderStatus(input: UpdateOrderStatusInput!): Order!
+  cancelOrder(id: ID!): Order!
+}
+
+type InventoryMutations {
+  createItem(input: CreateItemInput!): Item!
+  updateItem(input: UpdateItemInput!): Item!
+  deleteItem(id: ID!): Boolean!
+}
+
+type OrderMutations {
   createOrder(input: CreateOrderInput!): Order!
   updateOrderStatus(input: UpdateOrderStatusInput!): Order!
   cancelOrder(id: ID!): Order!
