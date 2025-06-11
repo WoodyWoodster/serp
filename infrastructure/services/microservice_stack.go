@@ -44,19 +44,21 @@ func NewMicroserviceStack(scope constructs.Construct, id string, props *Microser
 		GraphqlApiArn: awscdk.Fn_ImportValue(jsii.String("ErpGraphqlApiUrl")),
 	})
 
+	environment := &map[string]*string{
+		"TABLE_NAME":   table.TableName(),
+		"API_URL":      awscdk.Fn_ImportValue(jsii.String("ErpGraphqlApiUrl")),
+		"SERVICE_NAME": jsii.String(props.ServiceName),
+		"EVENT_BUS":    awscdk.Fn_ImportValue(jsii.String("ErpEventBusName")),
+		"LOG_LEVEL":    jsii.String("INFO"),
+	}
+
 	function := awslambda.NewFunction(stack, jsii.String(props.ServiceName+"Function"), &awslambda.FunctionProps{
-		Runtime: awslambda.Runtime_PROVIDED_AL2023(),
-		Handler: jsii.String("main"),
-		Code:    awslambda.Code_FromAsset(jsii.String("services/"+props.ServiceName+"/lambda"), nil),
-		Environment: &map[string]*string{
-			"TABLE_NAME":   table.TableName(),
-			"API_URL":      awscdk.Fn_ImportValue(jsii.String("ErpGraphqlApiUrl")),
-			"SERVICE_NAME": jsii.String(props.ServiceName),
-			"EVENT_BUS":    awscdk.Fn_ImportValue(jsii.String("ErpEventBusName")),
-			"LOG_LEVEL":    jsii.String("INFO"),
-		},
-		Timeout:    awscdk.Duration_Seconds(jsii.Number(30)),
-		MemorySize: jsii.Number(256),
+		Runtime:     awslambda.Runtime_PROVIDED_AL2023(),
+		Handler:     jsii.String("main"),
+		Code:        awslambda.Code_FromAsset(jsii.String("services/"+props.ServiceName+"/lambda"), nil),
+		Environment: environment,
+		Timeout:     awscdk.Duration_Seconds(jsii.Number(30)),
+		MemorySize:  jsii.Number(256),
 	})
 
 	table.GrantReadWriteData(function)
