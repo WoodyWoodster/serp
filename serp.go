@@ -37,7 +37,7 @@ func main() {
 		},
 	})
 
-	// Create Inventory microservice stack
+	// Services
 	services.NewMicroserviceStack(app, "InventoryServiceStack", &services.MicroserviceStackProps{
 		StackProps: awscdk.StackProps{
 			Env: env(),
@@ -49,7 +49,6 @@ func main() {
 		GraphqlApiId:    awscdk.Fn_ImportValue(jsii.String("ErpGraphqlApiId")),
 	})
 
-	// Create Orders microservice stack
 	services.NewMicroserviceStack(app, "OrdersServiceStack", &services.MicroserviceStackProps{
 		StackProps: awscdk.StackProps{
 			Env: env(),
