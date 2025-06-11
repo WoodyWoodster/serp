@@ -9,206 +9,178 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/google/uuid"
 )
 
-var TableName = os.Getenv("TABLE_NAME")
-
-type DBClient interface {
-	GetItem(ctx context.Context, params *dynamodb.GetItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
-	PutItem(ctx context.Context, params *dynamodb.PutItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
-	Query(ctx context.Context, params *dynamodb.QueryInput, optFns ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
-	UpdateItem(ctx context.Context, params *dynamodb.UpdateItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
+type DB struct {
+	client *dynamodb.Client
 }
 
-func GetOrderByID(ctx context.Context, db DBClient, id string) (Order, error) {
-	result, err := db.GetItem(ctx, &dynamodb.GetItemInput{
-		TableName: &TableName,
-		Key: map[string]dynamodbtypes.AttributeValue{
-			"PK": &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("ORDER#%s", id)},
-			"SK": &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("ORDER#%s", id)},
+func NewDB(cfg aws.Config) *DB {
+	return &DB{
+		client: dynamodb.NewFromConfig(cfg),
+	}
+}
+
+func (db *DB) GetOrder(ctx context.Context, id string) (*Order, error) {
+	tableName := os.Getenv("TABLE_NAME")
+	if tableName == "" {
+		return nil, fmt.Errorf("TABLE_NAME environment variable is not set")
+	}
+
+	result, err := db.client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: fmt.Sprintf("ORDER#%s", id)},
+			"SK": &types.AttributeValueMemberS{Value: fmt.Sprintf("ORDER#%s", id)},
 		},
 	})
 	if err != nil {
-		return Order{}, err
+		return nil, fmt.Errorf("failed to get order: %v", err)
 	}
 	if result.Item == nil {
-		return Order{}, fmt.Errorf("Order not found")
+		return nil, nil
 	}
-	return UnmarshalOrder(result.Item), nil
+
+	order := UnmarshalOrder(result.Item)
+	return &order, nil
 }
 
-func ListOrders(ctx context.Context, db DBClient, filter OrderFilterInput) ([]Order, error) {
-	queryInput := &dynamodb.QueryInput{
-		TableName:              &TableName,
-		KeyConditionExpression: aws.String("PK BEGINS_WITH :pk"),
-		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
-			":pk": &dynamodbtypes.AttributeValueMemberS{Value: "ORDER#"},
-		},
+func (db *DB) ListOrders(ctx context.Context) ([]Order, error) {
+	tableName := os.Getenv("TABLE_NAME")
+	if tableName == "" {
+		return nil, fmt.Errorf("TABLE_NAME environment variable is not set")
 	}
 
-	if filter.CustomerID != "" {
-		queryInput.FilterExpression = aws.String("customer_id = :customer_id")
-		queryInput.ExpressionAttributeValues[":customer_id"] = &dynamodbtypes.AttributeValueMemberS{Value: filter.CustomerID}
-	}
-	if filter.Status != "" {
-		queryInput.FilterExpression = aws.String("status = :status")
-		queryInput.ExpressionAttributeValues[":status"] = &dynamodbtypes.AttributeValueMemberS{Value: string(filter.Status)}
-	}
-
-	result, err := db.Query(ctx, queryInput)
-	if err != nil {
-		return nil, err
-	}
-
-	orders := make([]Order, 0, len(result.Items))
-	for _, item := range result.Items {
-		orders = append(orders, UnmarshalOrder(item))
-	}
-
-	return orders, nil
-}
-
-func ListOrdersByCustomer(ctx context.Context, db DBClient, customerID string) ([]Order, error) {
-	result, err := db.Query(ctx, &dynamodb.QueryInput{
-		TableName:              &TableName,
-		IndexName:              aws.String("CustomerIndex"),
-		KeyConditionExpression: aws.String("CustomerID = :customerID"),
-		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
-			":customerID": &dynamodbtypes.AttributeValueMemberS{Value: customerID},
+	result, err := db.client.Scan(ctx, &dynamodb.ScanInput{
+		TableName:        aws.String(tableName),
+		FilterExpression: aws.String("begins_with(PK, :prefix)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":prefix": &types.AttributeValueMemberS{Value: "ORDER#"},
 		},
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to scan orders: %v", err)
 	}
 
 	orders := make([]Order, 0, len(result.Items))
 	for _, item := range result.Items {
-		orders = append(orders, UnmarshalOrder(item))
+		order := UnmarshalOrder(item)
+		orders = append(orders, order)
 	}
+
 	return orders, nil
 }
 
-func CreateOrder(ctx context.Context, db DBClient, input CreateOrderInput) (Order, error) {
-	now := time.Now().UTC()
-	id := uuid.New().String()
-	order := Order{
-		ID:         id,
-		CustomerID: input.CustomerID,
-		Status:     "PENDING",
-		Items:      make([]OrderItem, len(input.Items)),
-		CreatedAt:  now.Format(time.RFC3339),
-		UpdatedAt:  now.Format(time.RFC3339),
+func (db *DB) CreateOrder(ctx context.Context, order Order) (*Order, error) {
+	tableName := os.Getenv("TABLE_NAME")
+	if tableName == "" {
+		return nil, fmt.Errorf("TABLE_NAME environment variable is not set")
 	}
 
-	for i, item := range input.Items {
-		order.Items[i] = OrderItem{
-			ItemID:   item.ItemID,
-			Quantity: item.Quantity,
+	if order.ID == "" {
+		order.ID = uuid.New().String()
+	}
+
+	// Set timestamps if not provided
+	now := time.Now().UTC().Format(time.RFC3339)
+	if order.CreatedAt == "" {
+		order.CreatedAt = now
+	}
+	if order.UpdatedAt == "" {
+		order.UpdatedAt = now
+	}
+
+	// Create main order record
+	_, err := db.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(tableName),
+		Item: map[string]types.AttributeValue{
+			"PK":           &types.AttributeValueMemberS{Value: fmt.Sprintf("ORDER#%s", order.ID)},
+			"SK":           &types.AttributeValueMemberS{Value: fmt.Sprintf("ORDER#%s", order.ID)},
+			"customer_id":  &types.AttributeValueMemberS{Value: order.CustomerID},
+			"status":       &types.AttributeValueMemberS{Value: string(order.Status)},
+			"total_amount": &types.AttributeValueMemberN{Value: strconv.FormatFloat(order.TotalAmount, 'f', 2, 64)},
+			"created_at":   &types.AttributeValueMemberS{Value: order.CreatedAt},
+			"updated_at":   &types.AttributeValueMemberS{Value: order.UpdatedAt},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create order: %v", err)
+	}
+
+	for _, item := range order.Items {
+		_, err := db.client.PutItem(ctx, &dynamodb.PutItemInput{
+			TableName: aws.String(tableName),
+			Item: map[string]types.AttributeValue{
+				"PK":         &types.AttributeValueMemberS{Value: fmt.Sprintf("ORDER#%s", order.ID)},
+				"SK":         &types.AttributeValueMemberS{Value: fmt.Sprintf("ITEM#%s", item.ID)},
+				"item_id":    &types.AttributeValueMemberS{Value: item.ID},
+				"quantity":   &types.AttributeValueMemberN{Value: strconv.Itoa(item.Quantity)},
+				"unit_price": &types.AttributeValueMemberN{Value: strconv.FormatFloat(item.UnitPrice, 'f', 2, 64)},
+				"created_at": &types.AttributeValueMemberS{Value: order.CreatedAt},
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create order item: %v", err)
 		}
 	}
 
-	_, err := db.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName: &TableName,
-		Item: map[string]dynamodbtypes.AttributeValue{
-			"PK":         &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("ORDER#%s", id)},
-			"SK":         &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("ORDER#%s", id)},
-			"Type":       &dynamodbtypes.AttributeValueMemberS{Value: "ORDER"},
-			"ID":         &dynamodbtypes.AttributeValueMemberS{Value: order.ID},
-			"CustomerID": &dynamodbtypes.AttributeValueMemberS{Value: order.CustomerID},
-			"Status":     &dynamodbtypes.AttributeValueMemberS{Value: string(order.Status)},
-			"Items":      &dynamodbtypes.AttributeValueMemberL{Value: MarshalOrderItems(order.Items)},
-			"CreatedAt":  &dynamodbtypes.AttributeValueMemberS{Value: order.CreatedAt},
-			"UpdatedAt":  &dynamodbtypes.AttributeValueMemberS{Value: order.UpdatedAt},
-		},
-	})
-	if err != nil {
-		return Order{}, err
-	}
-
-	_, err = db.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName: &TableName,
-		Item: map[string]dynamodbtypes.AttributeValue{
-			"PK":        &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("CUSTOMER#%s", order.CustomerID)},
-			"SK":        &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("ORDER#%s", id)},
-			"Type":      &dynamodbtypes.AttributeValueMemberS{Value: "CUSTOMER_ORDER"},
-			"OrderID":   &dynamodbtypes.AttributeValueMemberS{Value: id},
-			"Status":    &dynamodbtypes.AttributeValueMemberS{Value: string(order.Status)},
-			"CreatedAt": &dynamodbtypes.AttributeValueMemberS{Value: order.CreatedAt},
-		},
-	})
-	if err != nil {
-		return Order{}, err
-	}
-
-	return order, nil
+	return &order, nil
 }
 
-func UpdateOrderStatus(ctx context.Context, db DBClient, input UpdateOrderStatusInput) (Order, error) {
-	now := time.Now().UTC()
-	updateExpr := "SET #status = :status, #updated_at = :updated_at"
-	exprNames := map[string]string{
-		"#status":     "Status",
-		"#updated_at": "UpdatedAt",
-	}
-	exprValues := map[string]dynamodbtypes.AttributeValue{
-		":status":     &dynamodbtypes.AttributeValueMemberS{Value: string(input.Status)},
-		":updated_at": &dynamodbtypes.AttributeValueMemberS{Value: now.Format(time.RFC3339)},
+func (db *DB) UpdateOrderStatus(ctx context.Context, id string, status OrderStatus) (*Order, error) {
+	tableName := os.Getenv("TABLE_NAME")
+	if tableName == "" {
+		return nil, fmt.Errorf("TABLE_NAME environment variable is not set")
 	}
 
-	result, err := db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-		TableName:                 &TableName,
-		Key:                       map[string]dynamodbtypes.AttributeValue{"PK": &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("ORDER#%s", input.ID)}, "SK": &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("ORDER#%s", input.ID)}},
-		UpdateExpression:          aws.String(updateExpr),
-		ExpressionAttributeNames:  exprNames,
-		ExpressionAttributeValues: exprValues,
-		ReturnValues:              dynamodbtypes.ReturnValueAllNew,
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := db.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: fmt.Sprintf("ORDER#%s", id)},
+			"SK": &types.AttributeValueMemberS{Value: fmt.Sprintf("ORDER#%s", id)},
+		},
+		UpdateExpression: aws.String("SET #status = :status, #updated_at = :updated_at"),
+		ExpressionAttributeNames: map[string]string{
+			"#status":     "status",
+			"#updated_at": "updated_at",
+		},
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":status":     &types.AttributeValueMemberS{Value: string(status)},
+			":updated_at": &types.AttributeValueMemberS{Value: now},
+		},
+		ReturnValues: types.ReturnValueAllNew,
 	})
 	if err != nil {
-		return Order{}, err
+		return nil, fmt.Errorf("failed to update order status: %v", err)
 	}
 
 	order := UnmarshalOrder(result.Attributes)
-
-	_, err = db.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName: &TableName,
-		Item: map[string]dynamodbtypes.AttributeValue{
-			"PK":        &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("CUSTOMER#%s", order.CustomerID)},
-			"SK":        &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("ORDER#%s", input.ID)},
-			"Type":      &dynamodbtypes.AttributeValueMemberS{Value: "CUSTOMER_ORDER"},
-			"OrderID":   &dynamodbtypes.AttributeValueMemberS{Value: input.ID},
-			"Status":    &dynamodbtypes.AttributeValueMemberS{Value: string(input.Status)},
-			"CreatedAt": &dynamodbtypes.AttributeValueMemberS{Value: order.CreatedAt},
-		},
-	})
-	if err != nil {
-		return Order{}, err
-	}
-
-	return order, nil
+	return &order, nil
 }
 
-func UnmarshalOrder(av map[string]dynamodbtypes.AttributeValue) Order {
+func UnmarshalOrder(av map[string]types.AttributeValue) Order {
 	order := Order{}
-	if v, ok := av["ID"].(*dynamodbtypes.AttributeValueMemberS); ok {
+	if v, ok := av["ID"].(*types.AttributeValueMemberS); ok {
 		order.ID = v.Value
 	}
-	if v, ok := av["CustomerID"].(*dynamodbtypes.AttributeValueMemberS); ok {
+	if v, ok := av["customer_id"].(*types.AttributeValueMemberS); ok {
 		order.CustomerID = v.Value
 	}
-	if v, ok := av["Status"].(*dynamodbtypes.AttributeValueMemberS); ok {
+	if v, ok := av["status"].(*types.AttributeValueMemberS); ok {
 		order.Status = OrderStatus(v.Value)
 	}
-	if v, ok := av["TotalAmount"].(*dynamodbtypes.AttributeValueMemberN); ok {
+	if v, ok := av["total_amount"].(*types.AttributeValueMemberN); ok {
 		if f, err := strconv.ParseFloat(v.Value, 64); err == nil {
 			order.TotalAmount = f
 		}
 	}
-	if v, ok := av["CreatedAt"].(*dynamodbtypes.AttributeValueMemberS); ok {
+	if v, ok := av["created_at"].(*types.AttributeValueMemberS); ok {
 		order.CreatedAt = v.Value
 	}
-	if v, ok := av["UpdatedAt"].(*dynamodbtypes.AttributeValueMemberS); ok {
+	if v, ok := av["updated_at"].(*types.AttributeValueMemberS); ok {
 		order.UpdatedAt = v.Value
 	}
 	return order

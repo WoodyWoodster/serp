@@ -5,199 +5,192 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/google/uuid"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
-var TableName = os.Getenv("TABLE_NAME")
-
-type DBClient interface {
-	GetItem(ctx context.Context, params *dynamodb.GetItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
-	PutItem(ctx context.Context, params *dynamodb.PutItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
-	Query(ctx context.Context, params *dynamodb.QueryInput, optFns ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
-	UpdateItem(ctx context.Context, params *dynamodb.UpdateItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
+type DB struct {
+	client *dynamodb.Client
 }
 
-func GetItemByID(ctx context.Context, db DBClient, id string) (Item, error) {
-	result, err := db.GetItem(ctx, &dynamodb.GetItemInput{
-		TableName: &TableName,
-		Key: map[string]dynamodbtypes.AttributeValue{
-			"PK": &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("ITEM#%s", id)},
-			"SK": &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("ITEM#%s", id)},
+func NewDB(cfg aws.Config) *DB {
+	return &DB{
+		client: dynamodb.NewFromConfig(cfg),
+	}
+}
+
+func (db *DB) GetItem(ctx context.Context, id string) (*Item, error) {
+	tableName := os.Getenv("TABLE_NAME")
+	if tableName == "" {
+		return nil, fmt.Errorf("TABLE_NAME environment variable is not set")
+	}
+
+	result, err := db.client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: fmt.Sprintf("ITEM#%s", id)},
+			"SK": &types.AttributeValueMemberS{Value: fmt.Sprintf("ITEM#%s", id)},
 		},
 	})
 	if err != nil {
-		return Item{}, err
+		return nil, fmt.Errorf("failed to get item: %v", err)
 	}
 	if result.Item == nil {
-		return Item{}, fmt.Errorf("Item not found")
+		return nil, nil
 	}
-	return UnmarshalItem(result.Item), nil
+
+	item := UnmarshalItem(result.Item)
+	return &item, nil
 }
 
-func ListItems(ctx context.Context, db DBClient, filter ItemFilterInput) ([]Item, error) {
-	queryInput := &dynamodb.QueryInput{
-		TableName:              &TableName,
-		KeyConditionExpression: aws.String("PK BEGINS_WITH :pk"),
-		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
-			":pk": &dynamodbtypes.AttributeValueMemberS{Value: "ITEM#"},
+func (db *DB) ListItems(ctx context.Context) ([]Item, error) {
+	tableName := os.Getenv("TABLE_NAME")
+	if tableName == "" {
+		return nil, fmt.Errorf("TABLE_NAME environment variable is not set")
+	}
+
+	result, err := db.client.Scan(ctx, &dynamodb.ScanInput{
+		TableName:        aws.String(tableName),
+		FilterExpression: aws.String("begins_with(PK, :prefix)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":prefix": &types.AttributeValueMemberS{Value: "ITEM#"},
 		},
-	}
-
-	if filter.Category != "" {
-		queryInput.FilterExpression = aws.String("category = :category")
-		queryInput.ExpressionAttributeValues[":category"] = &dynamodbtypes.AttributeValueMemberS{Value: filter.Category}
-	}
-
-	result, err := db.Query(ctx, queryInput)
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to scan items: %v", err)
 	}
 
 	items := make([]Item, 0, len(result.Items))
 	for _, item := range result.Items {
-		items = append(items, UnmarshalItem(item))
+		invItem := UnmarshalItem(item)
+		items = append(items, invItem)
 	}
 
 	return items, nil
 }
 
-func CreateItem(ctx context.Context, db DBClient, input CreateItemInput) (Item, error) {
-	now := time.Now().UTC()
-	id := uuid.New().String()
-	item := Item{
-		ID:          id,
-		Name:        input.Name,
-		Description: input.Description,
-		Quantity:    input.Quantity,
-		UnitPrice:   input.UnitPrice,
-		Category:    input.Category,
-		CreatedAt:   now.Format(time.RFC3339),
-		UpdatedAt:   now.Format(time.RFC3339),
+func (db *DB) CreateItem(ctx context.Context, item Item) (*Item, error) {
+	tableName := os.Getenv("TABLE_NAME")
+	if tableName == "" {
+		return nil, fmt.Errorf("TABLE_NAME environment variable is not set")
 	}
 
-	_, err := db.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName: &TableName,
-		Item: map[string]dynamodbtypes.AttributeValue{
-			"PK":          &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("ITEM#%s", id)},
-			"SK":          &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("ITEM#%s", id)},
-			"Type":        &dynamodbtypes.AttributeValueMemberS{Value: "ITEM"},
-			"ID":          &dynamodbtypes.AttributeValueMemberS{Value: item.ID},
-			"Name":        &dynamodbtypes.AttributeValueMemberS{Value: item.Name},
-			"Description": &dynamodbtypes.AttributeValueMemberS{Value: item.Description},
-			"Quantity":    &dynamodbtypes.AttributeValueMemberN{Value: strconv.Itoa(item.Quantity)},
-			"UnitPrice":   &dynamodbtypes.AttributeValueMemberN{Value: strconv.FormatFloat(item.UnitPrice, 'f', 2, 64)},
-			"Category":    &dynamodbtypes.AttributeValueMemberS{Value: item.Category},
-			"CreatedAt":   &dynamodbtypes.AttributeValueMemberS{Value: item.CreatedAt},
-			"UpdatedAt":   &dynamodbtypes.AttributeValueMemberS{Value: item.UpdatedAt},
+	_, err := db.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(tableName),
+		Item: map[string]types.AttributeValue{
+			"PK":          &types.AttributeValueMemberS{Value: fmt.Sprintf("ITEM#%s", item.ID)},
+			"SK":          &types.AttributeValueMemberS{Value: fmt.Sprintf("ITEM#%s", item.ID)},
+			"name":        &types.AttributeValueMemberS{Value: item.Name},
+			"description": &types.AttributeValueMemberS{Value: item.Description},
+			"quantity":    &types.AttributeValueMemberN{Value: strconv.Itoa(item.Quantity)},
+			"created_at":  &types.AttributeValueMemberS{Value: item.CreatedAt},
+			"updated_at":  &types.AttributeValueMemberS{Value: item.UpdatedAt},
 		},
 	})
 	if err != nil {
-		return Item{}, err
+		return nil, fmt.Errorf("failed to create item: %v", err)
 	}
 
-	_, err = db.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName: &TableName,
-		Item: map[string]dynamodbtypes.AttributeValue{
-			"PK":        &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("METADATA#CATEGORY#%s", item.Category)},
-			"SK":        &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("ITEM#%s", id)},
-			"Type":      &dynamodbtypes.AttributeValueMemberS{Value: "METADATA"},
-			"ItemID":    &dynamodbtypes.AttributeValueMemberS{Value: id},
-			"CreatedAt": &dynamodbtypes.AttributeValueMemberS{Value: item.CreatedAt},
-		},
-	})
-	if err != nil {
-		return Item{}, err
-	}
-
-	return item, nil
+	return &item, nil
 }
 
-func UpdateItem(ctx context.Context, db DBClient, input UpdateItemInput) (Item, error) {
-	now := time.Now().UTC()
-	updateExpr := "SET #name = :name, #description = :description, #quantity = :quantity, #unitPrice = :unitPrice, #category = :category, #updated_at = :updated_at"
-	exprNames := map[string]string{
-		"#name":        "Name",
-		"#description": "Description",
-		"#quantity":    "Quantity",
-		"#unitPrice":   "UnitPrice",
-		"#category":    "Category",
-		"#updated_at":  "UpdatedAt",
-	}
-	exprValues := map[string]dynamodbtypes.AttributeValue{
-		":name":        &dynamodbtypes.AttributeValueMemberS{Value: input.Name},
-		":description": &dynamodbtypes.AttributeValueMemberS{Value: input.Description},
-		":quantity":    &dynamodbtypes.AttributeValueMemberN{Value: strconv.Itoa(input.Quantity)},
-		":unitPrice":   &dynamodbtypes.AttributeValueMemberN{Value: strconv.FormatFloat(input.UnitPrice, 'f', 2, 64)},
-		":category":    &dynamodbtypes.AttributeValueMemberS{Value: input.Category},
-		":updated_at":  &dynamodbtypes.AttributeValueMemberS{Value: now.Format(time.RFC3339)},
+func (db *DB) UpdateItem(ctx context.Context, item Item) (*Item, error) {
+	tableName := os.Getenv("TABLE_NAME")
+	if tableName == "" {
+		return nil, fmt.Errorf("TABLE_NAME environment variable is not set")
 	}
 
-	result, err := db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-		TableName:                 &TableName,
-		Key:                       map[string]dynamodbtypes.AttributeValue{"PK": &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("ITEM#%s", input.ID)}, "SK": &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("ITEM#%s", input.ID)}},
+	updateExpr := "SET #name = :name, #description = :description, #quantity = :quantity, #updated_at = :updated_at"
+	exprNames := map[string]string{
+		"#name":        "name",
+		"#description": "description",
+		"#quantity":    "quantity",
+		"#updated_at":  "updated_at",
+	}
+	exprValues := map[string]types.AttributeValue{
+		":name":        &types.AttributeValueMemberS{Value: item.Name},
+		":description": &types.AttributeValueMemberS{Value: item.Description},
+		":quantity":    &types.AttributeValueMemberN{Value: strconv.Itoa(item.Quantity)},
+		":updated_at":  &types.AttributeValueMemberS{Value: item.UpdatedAt},
+	}
+
+	result, err := db.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: fmt.Sprintf("ITEM#%s", item.ID)},
+			"SK": &types.AttributeValueMemberS{Value: fmt.Sprintf("ITEM#%s", item.ID)},
+		},
 		UpdateExpression:          aws.String(updateExpr),
 		ExpressionAttributeNames:  exprNames,
 		ExpressionAttributeValues: exprValues,
-		ReturnValues:              dynamodbtypes.ReturnValueAllNew,
+		ReturnValues:              types.ReturnValueAllNew,
 	})
 	if err != nil {
-		return Item{}, err
+		return nil, fmt.Errorf("failed to update item: %v", err)
 	}
 
-	item := UnmarshalItem(result.Attributes)
+	updatedItem := UnmarshalItem(result.Attributes)
+	return &updatedItem, nil
+}
 
-	if input.Category != "" {
-		_, err = db.PutItem(ctx, &dynamodb.PutItemInput{
-			TableName: &TableName,
-			Item: map[string]dynamodbtypes.AttributeValue{
-				"PK":        &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("METADATA#CATEGORY#%s", input.Category)},
-				"SK":        &dynamodbtypes.AttributeValueMemberS{Value: fmt.Sprintf("ITEM#%s", input.ID)},
-				"Type":      &dynamodbtypes.AttributeValueMemberS{Value: "METADATA"},
-				"ItemID":    &dynamodbtypes.AttributeValueMemberS{Value: input.ID},
-				"CreatedAt": &dynamodbtypes.AttributeValueMemberS{Value: item.CreatedAt},
-			},
-		})
-		if err != nil {
-			return Item{}, err
-		}
+func (db *DB) DeleteItem(ctx context.Context, id string) (*Item, error) {
+	tableName := os.Getenv("TABLE_NAME")
+	if tableName == "" {
+		return nil, fmt.Errorf("TABLE_NAME environment variable is not set")
+	}
+
+	item, err := db.GetItem(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, nil
+	}
+
+	_, err = db.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: fmt.Sprintf("ITEM#%s", id)},
+			"SK": &types.AttributeValueMemberS{Value: fmt.Sprintf("ITEM#%s", id)},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to delete item: %v", err)
 	}
 
 	return item, nil
 }
 
-func UnmarshalItem(av map[string]dynamodbtypes.AttributeValue) Item {
+func UnmarshalItem(av map[string]types.AttributeValue) Item {
 	item := Item{}
-	if v, ok := av["ID"].(*dynamodbtypes.AttributeValueMemberS); ok {
+	if v, ok := av["ID"].(*types.AttributeValueMemberS); ok {
 		item.ID = v.Value
 	}
-	if v, ok := av["Name"].(*dynamodbtypes.AttributeValueMemberS); ok {
+	if v, ok := av["Name"].(*types.AttributeValueMemberS); ok {
 		item.Name = v.Value
 	}
-	if v, ok := av["Description"].(*dynamodbtypes.AttributeValueMemberS); ok {
+	if v, ok := av["Description"].(*types.AttributeValueMemberS); ok {
 		item.Description = v.Value
 	}
-	if v, ok := av["Quantity"].(*dynamodbtypes.AttributeValueMemberN); ok {
+	if v, ok := av["Quantity"].(*types.AttributeValueMemberN); ok {
 		if i, err := strconv.Atoi(v.Value); err == nil {
 			item.Quantity = i
 		}
 	}
-	if v, ok := av["UnitPrice"].(*dynamodbtypes.AttributeValueMemberN); ok {
+	if v, ok := av["UnitPrice"].(*types.AttributeValueMemberN); ok {
 		if f, err := strconv.ParseFloat(v.Value, 64); err == nil {
 			item.UnitPrice = f
 		}
 	}
-	if v, ok := av["Category"].(*dynamodbtypes.AttributeValueMemberS); ok {
+	if v, ok := av["Category"].(*types.AttributeValueMemberS); ok {
 		item.Category = v.Value
 	}
-	if v, ok := av["CreatedAt"].(*dynamodbtypes.AttributeValueMemberS); ok {
+	if v, ok := av["CreatedAt"].(*types.AttributeValueMemberS); ok {
 		item.CreatedAt = v.Value
 	}
-	if v, ok := av["UpdatedAt"].(*dynamodbtypes.AttributeValueMemberS); ok {
+	if v, ok := av["UpdatedAt"].(*types.AttributeValueMemberS); ok {
 		item.UpdatedAt = v.Value
 	}
 	return item
